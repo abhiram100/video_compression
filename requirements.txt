@@ -6,6 +6,8 @@ accelerate
 opencv-python
 numpy
 scikit-learn
+scikit-image
+scipy
 umap-learn
 matplotlib
 tqdm

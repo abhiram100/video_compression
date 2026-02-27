@@ -60,7 +60,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     print("=" * 60)
-    print("STEP 1/4  Extract latents")
+    print("STEP 1/5  Extract latents")
     print("=" * 60)
     latents_path = extract_latents(
         video_path=args.video,
@@ -72,7 +72,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 2/4  Build populations")
+    print("STEP 2/5  Build populations")
     print("=" * 60)
     build_populations(
         latents_path=latents_path,
@@ -82,7 +82,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 3/4  Spectral analysis")
+    print("STEP 3/5  Spectral analysis")
     print("=" * 60)
     run_spectral_analysis(
         data_dir=args.output,
@@ -91,7 +91,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 4/4  UMAP visualisation")
+    print("STEP 4/5  UMAP visualisation")
     print("=" * 60)
     run_umap(
         data_dir=args.output,
@@ -100,9 +100,23 @@ def main():
     )
 
     print("\n" + "=" * 60)
+    print("STEP 5/5  Evaluate predictor (SSIM / PSNR / FID)")
+    print("=" * 60)
+    C, H, W = map(int, args.latent_shape.split(","))
+    run_evaluation(
+        data_dir=args.output,
+        output_dir=args.output,
+        model_id=args.vae,
+        latent_shape=(C, H, W),
+        n_viz=args.n_viz,
+        compute_fid_flag=not args.no_fid,
+    )
+
+    print("\n" + "=" * 60)
     print("Done! Outputs in:", os.path.abspath(args.output))
-    print("  latents.npy, raw.npy, diff.npy, cond.npy")
+    print("  latents.npy, raw.npy, diff.npy, cond.npy, predictor.pkl")
     print("  scree_plot.png, umap_scatter.png, rank_table.txt")
+    print("  eval_metrics.txt, eval_frames/frame_XXXX.png")
     print("=" * 60)
 
 
