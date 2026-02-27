@@ -404,7 +404,7 @@ def parse_args():
     p.add_argument(
         "--decode_batch",
         type=int,
-        default=8,
+        default=1,
         help="VAE decode batch size (lower if OOM).",
     )
     p.add_argument(

@@ -6,6 +6,8 @@ Inputs:
   <data_dir>/raw.npy
   <data_dir>/diff.npy
   <data_dir>/cond.npy
+  <data_dir>/gop_diff_{K}.npy   (optional, one per GOP size)
+  <data_dir>/gop_cond_{K}.npy   (optional, one per GOP size)
 
 Outputs:
   <output>/scree_plot.png
@@ -14,9 +16,11 @@ Outputs:
 
 import argparse
 import os
+import re
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.decomposition import TruncatedSVD
@@ -81,33 +85,103 @@ def analyse_population(M: np.ndarray, name: str,
     }
 
 
+def _discover_gop_populations(data_dir: str) -> list[tuple[str, str]]:
+    """
+    Scan data_dir for gop_diff_K.npy / gop_cond_K.npy files.
+    Returns list of (name, path) sorted by K.
+    """
+    found = {}
+    for fname in os.listdir(data_dir):
+        m = re.match(r"^gop_(diff|cond)_(\d+)\.npy$", fname)
+        if m:
+            kind, K = m.group(1), int(m.group(2))
+            found.setdefault(K, {})[kind] = os.path.join(data_dir, fname)
+
+    entries = []
+    for K in sorted(found):
+        for kind in ("diff", "cond"):
+            if kind in found[K]:
+                entries.append((f"gop_{kind}_{K}", found[K][kind]))
+    return entries
+
+
 # ──────────────────────────────────────────────
 # plotting
 # ──────────────────────────────────────────────
 
+# Colour / style catalogue: base populations get solid lines, GOP gets dashed
+_BASE_COLOURS = {
+    "raw":  "#1f77b4",
+    "diff": "#ff7f0e",
+    "cond": "#2ca02c",
+}
+_BASE_LABELS = {
+    "raw":  "Raw Latents (Z)",
+    "diff": "Linear Residual (Δz)",
+    "cond": "Conditional Residual (r)",
+}
+# Colour pairs for each GOP index
+_GOP_DIFF_COLOURS = ["#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22"]
+_GOP_COND_COLOURS = ["#d62728", "#17becf", "#aec7e8", "#ffbb78", "#98df8a"]
+
+
+def _result_style(name: str, gop_diff_idx: dict, gop_cond_idx: dict):
+    """Return (color, linestyle, label) for a named population."""
+    if name in _BASE_COLOURS:
+        return _BASE_COLOURS[name], "-", _BASE_LABELS[name]
+
+    m = re.match(r"^gop_(diff|cond)_(\d+)$", name)
+    if m:
+        kind, K = m.group(1), int(m.group(2))
+        if kind == "diff":
+            idx = gop_diff_idx.get(K, 0)
+            col = _GOP_DIFF_COLOURS[idx % len(_GOP_DIFF_COLOURS)]
+            return col, "--", f"GOP-{K} Δz (keyframe→inter)"
+        else:
+            idx = gop_cond_idx.get(K, 0)
+            col = _GOP_COND_COLOURS[idx % len(_GOP_COND_COLOURS)]
+            return col, ":", f"GOP-{K} residual (predicted→inter)"
+    return None, "-", name
+
+
 def plot_scree(results: list[dict], output_path: str):
     """Log-scale normalised eigenvalue scree plot for all populations."""
-    fig, ax = plt.subplots(figsize=(9, 5))
+    # Build index maps so each GOP size gets a consistent colour
+    gop_ks = sorted({int(re.match(r"gop_(?:diff|cond)_(\d+)", r["name"]).group(1))
+                     for r in results
+                     if re.match(r"gop_(?:diff|cond)_(\d+)", r["name"])})
+    gop_diff_idx = {K: i for i, K in enumerate(gop_ks)}
+    gop_cond_idx = {K: i for i, K in enumerate(gop_ks)}
 
-    colors = {"raw": "#1f77b4", "diff": "#ff7f0e", "cond": "#2ca02c"}
-    labels = {"raw": "Raw Latents (Z)",
-              "diff": "Linear Residual (Δz)",
-              "cond": "Conditional Residual (r)"}
+    # Two axes: left = base populations, right = GOP populations
+    has_gop = any(r["name"].startswith("gop_") for r in results)
+    if has_gop:
+        fig, (ax_base, ax_gop) = plt.subplots(1, 2, figsize=(16, 5),
+                                               sharey=True,
+                                               gridspec_kw={"wspace": 0.08})
+    else:
+        fig, ax_base = plt.subplots(figsize=(9, 5))
+        ax_gop = None
 
     for r in results:
-        k = r["n_dims"]
-        name = r["name"]
-        color = colors.get(name, None)
-        label = labels.get(name, name)
+        k     = r["n_dims"]
+        color, ls, label = _result_style(r["name"], gop_diff_idx, gop_cond_idx)
+        ax    = ax_gop if (ax_gop and r["name"].startswith("gop_")) else ax_base
         ax.plot(range(1, k + 1), r["norm_eigs"],
-                label=label, color=color, linewidth=1.5)
+                label=label, color=color, linestyle=ls, linewidth=1.6)
 
-    ax.set_yscale("log")
-    ax.set_xlabel("Component index", fontsize=12)
-    ax.set_ylabel("Normalised eigenvalue  λ̄_i", fontsize=12)
-    ax.set_title("Eigen Spectral Density (ESD) – Scree Plot", fontsize=13)
-    ax.legend(fontsize=11)
-    ax.grid(True, which="both", ls="--", alpha=0.4)
+    for ax, title in [(ax_base, "Base populations"),
+                      (ax_gop,  "GOP residual populations (dashed=Δz, dotted=cond)")]:
+        if ax is None:
+            continue
+        ax.set_yscale("log")
+        ax.set_xlabel("Component index", fontsize=11)
+        ax.set_ylabel("Normalised eigenvalue  λ̄_i", fontsize=11)
+        ax.set_title(title, fontsize=12)
+        ax.legend(fontsize=9, loc="upper right")
+        ax.grid(True, which="both", ls="--", alpha=0.35)
+
+    fig.suptitle("Eigen Spectral Density – Scree Plot", fontsize=13)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)
     plt.close()
@@ -119,48 +193,64 @@ def plot_scree(results: list[dict], output_path: str):
 # ──────────────────────────────────────────────
 
 def print_rank_table(results: list[dict], save_path: str):
-    header = f"{'Metric':<28} {'Raw Latents':>16} {'Linear Residual':>16} {'Conditional Residual':>22}"
+    # Gather base and GOP results
+    base_order = ["raw", "diff", "cond"]
+    base  = [r for r in results if r["name"] in base_order]
+    base  = sorted(base, key=lambda r: base_order.index(r["name"]))
+    gops  = [r for r in results if r["name"].startswith("gop_")]
+
+    col_w = 18  # column width
+
+    def row(label, key):
+        cells = f"{label:<28}"
+        for r in base:
+            v = r[key]
+            cells += f"{v:{col_w}.1f}" if isinstance(v, float) else f"{v:{col_w}d}"
+        return cells
+
+    header = f"{'Metric':<28}" + "".join(
+        f"{r['name']:>{col_w}}" for r in base
+    )
     sep = "-" * len(header)
+    rows = [sep, header, sep,
+            row("Effective Rank (PR)", "pr"),
+            row("Dims for 95% Var",   "dims_95"),
+            row("Dims for 99% Var",   "dims_99"),
+            sep]
 
-    row_pr   = f"{'Effective Rank (PR)':<28}"
-    row_d95  = f"{'Dims for 95% Var':<28}"
-    row_d99  = f"{'Dims for 99% Var':<28}"
+    # Conclusion for base populations
+    raw_r  = next((r for r in base if r["name"] == "raw"),  None)
+    cond_r = next((r for r in base if r["name"] == "cond"), None)
+    if raw_r and cond_r:
+        if cond_r["pr"] < raw_r["pr"]:
+            verdict = (f"✅  CONFIRMED:  PR_cond ({cond_r['pr']:.1f}) "
+                       f"< PR_raw ({raw_r['pr']:.1f})")
+        else:
+            verdict = (f"❌  NOT CONFIRMED:  PR_cond ({cond_r['pr']:.1f}) "
+                       f">= PR_raw ({raw_r['pr']:.1f})")
+        rows += ["", "Hypothesis (base):", verdict, ""]
 
-    for r in results:
-        val_pr  = f"{r['pr']:>16.1f}"
-        val_d95 = f"{r['dims_95']:>16d}"
-        val_d99 = f"{r['dims_99']:>16d}"
+    # GOP table
+    if gops:
+        rows += ["", "GOP Residual Populations:", sep]
+        gop_header = (f"{'Population':<24}  {'PR':>8}  {'dims@95%':>10}  "
+                      f"{'dims@99%':>10}  {'vs raw PR':>12}")
+        rows += [gop_header, "-" * len(gop_header)]
+        raw_pr = raw_r["pr"] if raw_r else float("nan")
+        for r in sorted(gops, key=lambda x: x["name"]):
+            delta = r["pr"] - raw_pr
+            sign  = "↓" if delta < 0 else "↑"
+            rows.append(
+                f"{r['name']:<24}  {r['pr']:>8.1f}  {r['dims_95']:>10d}  "
+                f"{r['dims_99']:>10d}  "
+                f"{sign}{abs(delta):>9.1f} ({100*delta/raw_pr:+.1f}%)"
+            )
+        rows.append(sep)
 
-        if r["name"] == "raw":
-            row_pr  += val_pr
-            row_d95 += val_d95
-            row_d99 += val_d99
-        elif r["name"] == "diff":
-            row_pr  += val_pr
-            row_d95 += val_d95
-            row_d99 += val_d99
-        elif r["name"] == "cond":
-            row_pr  += f"{r['pr']:>22.1f}"
-            row_d95 += f"{r['dims_95']:>22d}"
-            row_d99 += f"{r['dims_99']:>22d}"
-
-    # Conclusion
-    raw_res  = next(r for r in results if r["name"] == "raw")
-    cond_res = next(r for r in results if r["name"] == "cond")
-
-    if cond_res["pr"] < raw_res["pr"]:
-        verdict = (f"✅  HYPOTHESIS CONFIRMED:  PR_cond ({cond_res['pr']:.1f}) "
-                   f"< PR_raw ({raw_res['pr']:.1f})")
-    else:
-        verdict = (f"❌  HYPOTHESIS NOT CONFIRMED:  PR_cond ({cond_res['pr']:.1f}) "
-                   f">= PR_raw ({raw_res['pr']:.1f})")
-
-    table = "\n".join([sep, header, sep, row_pr, row_d95, row_d99, sep,
-                       "", "Conclusion:", verdict, ""])
-
-    print(table)
+    table = "\n".join(rows)
+    print("\n" + table)
     with open(save_path, "w") as f:
-        f.write(table)
+        f.write(table + "\n")
     print(f"[spectral] rank table saved → {save_path}")
 
 
@@ -172,11 +262,15 @@ def run_spectral_analysis(data_dir: str, output_dir: str,
                           n_components: int = None):
     os.makedirs(output_dir, exist_ok=True)
 
+    # Always load base populations
     populations = [
         ("raw",  os.path.join(data_dir, "raw.npy")),
         ("diff", os.path.join(data_dir, "diff.npy")),
         ("cond", os.path.join(data_dir, "cond.npy")),
     ]
+
+    # Auto-discover any GOP populations written by build_populations
+    populations += _discover_gop_populations(data_dir)
 
     results = []
     for name, path in populations:
@@ -196,11 +290,11 @@ def run_spectral_analysis(data_dir: str, output_dir: str,
 def parse_args():
     p = argparse.ArgumentParser(description="Spectral analysis of latent populations.")
     p.add_argument("--data_dir", default="results/",
-                   help="Directory containing raw.npy / diff.npy / cond.npy.")
+                   help="Directory containing raw.npy / diff.npy / cond.npy "
+                        "(+ any gop_diff_K.npy / gop_cond_K.npy).")
     p.add_argument("--n_components", type=int, default=None,
                    help="Max SVD components (default: min(T,D)-1).")
-    p.add_argument("--output", default="results/",
-                   help="Output directory for plots and table.")
+    p.add_argument("--output", default="results/", help="Output directory.")
     return p.parse_args()
 
 

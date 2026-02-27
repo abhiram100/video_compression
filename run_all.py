@@ -20,6 +20,7 @@ from build_populations import build_populations
 from spectral_analysis import run_spectral_analysis
 from visualize_umap import run_umap
 from evaluate_predictor import run_evaluation
+from evaluate_keyframe_gop import run_gop_evaluation
 
 
 def parse_args():
@@ -50,6 +51,10 @@ def parse_args():
                    help="C,H,W of one latent (default: 4,64,64 for SD VAE @ 512px).")
     p.add_argument("--no_fid", action="store_true",
                    help="Skip FID computation in evaluation step.")
+    p.add_argument("--gop_sizes", default="1,3,5,10",
+                   help="Comma-separated GOP sizes for keyframe eval (default: 1,3,5,10).")
+    p.add_argument("--decode_batch", type=int, default=1,
+                   help="VAE decode batch size (lower if OOM).")
     p.add_argument("--output", default="results/",
                    help="Output directory for all artefacts.")
     return p.parse_args()
@@ -60,7 +65,7 @@ def main():
     os.makedirs(args.output, exist_ok=True)
 
     print("=" * 60)
-    print("STEP 1/5  Extract latents")
+    print("STEP 1/6  Extract latents")
     print("=" * 60)
     latents_path = extract_latents(
         video_path=args.video,
@@ -72,17 +77,19 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 2/5  Build populations")
+    print("STEP 2/6  Build populations")
     print("=" * 60)
+    gop_sizes = [int(x) for x in args.gop_sizes.split(",") if x.strip()]
     build_populations(
         latents_path=latents_path,
         output_dir=args.output,
         ridge_alpha=args.ridge_alpha,
         pca_dims=args.pca_dims,
+        gop_sizes=gop_sizes,
     )
 
     print("\n" + "=" * 60)
-    print("STEP 3/5  Spectral analysis")
+    print("STEP 3/6  Spectral analysis")
     print("=" * 60)
     run_spectral_analysis(
         data_dir=args.output,
@@ -91,7 +98,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 4/5  UMAP visualisation")
+    print("STEP 4/6  UMAP visualisation")
     print("=" * 60)
     run_umap(
         data_dir=args.output,
@@ -100,7 +107,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("STEP 5/5  Evaluate predictor (SSIM / PSNR / FID)")
+    print("STEP 5/6  Evaluate predictor (SSIM / PSNR / FID)")
     print("=" * 60)
     C, H, W = map(int, args.latent_shape.split(","))
     run_evaluation(
@@ -110,6 +117,21 @@ def main():
         latent_shape=(C, H, W),
         n_viz=args.n_viz,
         compute_fid_flag=not args.no_fid,
+        decode_batch=args.decode_batch,
+    )
+
+    print("\n" + "=" * 60)
+    print("STEP 6/6  Keyframe GOP evaluation (memory vs quality)")
+    print("=" * 60)
+    run_gop_evaluation(
+        data_dir=args.output,
+        output_dir=args.output,
+        gop_sizes=gop_sizes,
+        model_id=args.vae,
+        latent_shape=(C, H, W),
+        n_viz=args.n_viz,
+        decode_batch=args.decode_batch,
+        compute_fid_flag=not args.no_fid,
     )
 
     print("\n" + "=" * 60)
@@ -117,6 +139,8 @@ def main():
     print("  latents.npy, raw.npy, diff.npy, cond.npy, predictor.pkl")
     print("  scree_plot.png, umap_scatter.png, rank_table.txt")
     print("  eval_metrics.txt, eval_frames/frame_XXXX.png")
+    print("  gop_eval/gop_metrics.txt, gop_eval/gop_memory_quality.png")
+    print("  gop_eval/panels_gop{K}/frame_NNNN.png")
     print("=" * 60)
 
 
