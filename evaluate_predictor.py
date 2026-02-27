@@ -48,34 +48,62 @@ def load_vae(model_id: str, device: torch.device) -> AutoencoderKL:
 
 
 @torch.no_grad()
-def decode_latents(
-    vae: AutoencoderKL, latents_flat: np.ndarray, latent_shape: tuple[int, int, int]
-) -> np.ndarray:
+def _decode_batch(vae: AutoencoderKL,
+                  batch_flat: np.ndarray,
+                  latent_shape: tuple[int, int, int]) -> np.ndarray:
+    """Decode a single small batch of latents → (B, H, W, 3) uint8."""
+    device = next(vae.parameters()).device
+    C, H, W = latent_shape
+    B = batch_flat.shape[0]
+    scale = 1.0 / 0.18215
+    z = torch.from_numpy(batch_flat).to(device).reshape(B, C, H, W) * scale
+    out = vae.decode(z).sample                      # (B, 3, H_img, W_img)
+    out = (out.clamp(-1, 1) + 1) / 2
+    out = (out * 255).byte().cpu().numpy()
+    return out.transpose(0, 2, 3, 1)               # (B, H, W, 3)
+
+
+def decode_latents_to_memmap(vae: AutoencoderKL,
+                              latents_flat: np.ndarray,
+                              latent_shape: tuple[int, int, int],
+                              save_path: str,
+                              batch_size: int = 4,
+                              desc: str = "Decoding") -> np.ndarray:
     """
-    Decode a batch of flat latent vectors to uint8 RGB images.
+    Decode latents one small batch at a time and stream results directly to a
+    memory-mapped file on disk.  Peak RAM = one batch of images, not all N.
 
     Args:
         latents_flat: (N, D) float32
-        latent_shape: (C, H, W) – spatial shape to reshape into
+        latent_shape: (C, H, W)
+        save_path:    path for the .npy memmap file
+        batch_size:   frames per GPU forward pass (reduce if OOM)
 
     Returns:
-        images: (N, H_img, W_img, 3) uint8
+        numpy memmap array (N, H_img, W_img, 3) uint8
     """
-    device = next(vae.parameters()).device
-    C, H, W = latent_shape
     N = latents_flat.shape[0]
 
-    # SD VAE uses a scaling factor of 0.18215
-    scale = 1.0 / 0.18215
+    # Decode one frame to learn the output spatial size
+    sample = _decode_batch(vae, latents_flat[:1], latent_shape)  # (1, H, W, 3)
+    _, H_img, W_img, _ = sample.shape
 
-    z = torch.from_numpy(latents_flat).to(device)  # (N, D)
-    z = z.reshape(N, C, H, W) * scale  # (N, C, H, W)
+    # Pre-allocate the memmap on disk
+    mmap = np.lib.format.open_memmap(
+        save_path, mode="w+", dtype=np.uint8, shape=(N, H_img, W_img, 3)
+    )
+    mmap[0] = sample[0]
 
-    decoded = vae.decode(z).sample  # (N, 3, H_img, W_img)
-    decoded = (decoded.clamp(-1, 1) + 1) / 2  # [0, 1]
-    decoded = (decoded * 255).byte().cpu().numpy()  # uint8
-    decoded = decoded.transpose(0, 2, 3, 1)  # (N, H, W, 3)
-    return decoded
+    for start in tqdm(range(1, N, batch_size), desc=desc, unit="batch"):
+        end = min(start + batch_size, N)
+        batch = _decode_batch(vae, latents_flat[start:end], latent_shape)
+        mmap[start:end] = batch
+        # Flush + free GPU cache after every batch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    mmap.flush()
+    return mmap
 
 
 # ──────────────────────────────────────────────
@@ -248,20 +276,31 @@ def run_evaluation(
     Y_prev = latents[:-1]  # (T-1, D)  previous frames
     N = Y_gt.shape[0]
 
-    # ── Decode ───────────────────────────────────────────────────────────
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    device = "cpu"
+    # ── Decode (streaming batch-by-batch → memmap on disk) ───────────────
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[eval] loading VAE ({model_id}) on {device} …")
     vae = load_vae(model_id, device)
 
     print("[eval] decoding ground-truth frames …")
-    imgs_gt = decode_latents(vae, Y_gt, latent_shape)  # (N, H, W, 3)
+    imgs_gt = decode_latents_to_memmap(
+        vae, Y_gt, latent_shape,
+        save_path=os.path.join(output_dir, "_imgs_gt.npy"),
+        batch_size=decode_batch, desc="GT decode",
+    )
 
     print("[eval] decoding predicted frames …")
-    imgs_pred = decode_latents(vae, Y_hat, latent_shape)  # (N, H, W, 3)
+    imgs_pred = decode_latents_to_memmap(
+        vae, Y_hat, latent_shape,
+        save_path=os.path.join(output_dir, "_imgs_pred.npy"),
+        batch_size=decode_batch, desc="Pred decode",
+    )
 
     print("[eval] decoding previous frames (for panel context) …")
-    imgs_prev = decode_latents(vae, Y_prev, latent_shape)  # (N, H, W, 3)
+    imgs_prev = decode_latents_to_memmap(
+        vae, Y_prev, latent_shape,
+        save_path=os.path.join(output_dir, "_imgs_prev.npy"),
+        batch_size=decode_batch, desc="Prev decode",
+    )
 
     # ── Per-frame metrics ────────────────────────────────────────────────
     print("[eval] computing per-frame SSIM / PSNR …")
