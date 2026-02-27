@@ -59,8 +59,8 @@ def _decode_batch(vae: AutoencoderKL,
     z = torch.from_numpy(batch_flat).to(device).reshape(B, C, H, W) * scale
     out = vae.decode(z).sample                      # (B, 3, H_img, W_img)
     out = (out.clamp(-1, 1) + 1) / 2
-    out = (out * 255).byte().cpu().numpy()
-    return out.transpose(0, 2, 3, 1)               # (B, H, W, 3)
+    out = (out * 255).clamp(0, 255).to(torch.uint8).cpu().numpy()
+    return out.transpose(0, 2, 3, 1)               # (B, H, W, 3)  RGB uint8
 
 
 def decode_latents_to_memmap(vae: AutoencoderKL,
