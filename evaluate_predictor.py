@@ -55,8 +55,7 @@ def _decode_batch(vae: AutoencoderKL,
     device = next(vae.parameters()).device
     C, H, W = latent_shape
     B = batch_flat.shape[0]
-    scale = 1.0 / 0.18215
-    z = torch.from_numpy(batch_flat).to(device).reshape(B, C, H, W) * scale
+    z = torch.from_numpy(batch_flat).to(device).reshape(B, C, H, W)
     out = vae.decode(z).sample                      # (B, 3, H_img, W_img)
     out = (out.clamp(-1, 1) + 1) / 2
     out = (out * 255).clamp(0, 255).to(torch.uint8).cpu().numpy()

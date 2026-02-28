@@ -118,7 +118,7 @@ def decode_latent(vae: AutoencoderKL,
     """(D,) → (H_img, W_img, 3) uint8 RGB."""
     device = next(vae.parameters()).device
     C, H, W = latent_shape
-    z = torch.from_numpy(z_flat).to(device).reshape(1, C, H, W) / 0.18215
+    z = torch.from_numpy(z_flat).to(device).reshape(1, C, H, W)
     out = vae.decode(z).sample                          # (1,3,H,W)
     out = (out.clamp(-1, 1) + 1) / 2
     out = (out * 255).clamp(0, 255).to(torch.uint8).cpu().numpy()
