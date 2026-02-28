@@ -101,6 +101,7 @@ def extract_latents(video_path: str, n_frames: int, model_id: str,
             ok, frame = cap.read()
             if not ok:
                 break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # convert to RGB for PIL
             tensor = frame_to_tensor(frame, size=frame_size)
             z = encode_frame(vae, tensor)         # (C, H, W)
             latents.append(z.reshape(-1))         # flatten → (C*H*W,)
