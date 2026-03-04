@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "compressor"
+version = "0.1.0"
+description = "Video compression pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "torchvision",
+    "diffusers",
+    "transformers",
+    "accelerate",
+    "opencv-python",
+    "numpy",
+    "scikit-learn",
+    "scikit-image",
+    "scipy",
+    "umap-learn",
+    "matplotlib",
+    "tqdm",
+    "Pillow",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["compressor*"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy"]
