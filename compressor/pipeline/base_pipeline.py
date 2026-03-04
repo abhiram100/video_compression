@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from compressor.data.video_reader import VideoReader
 from compressor.data.video_writer import VideoWriter
-from compressor.data.image_utils import read_image, write_image, image_pixel_bytes
+from compressor.data.image_utils import read_image, write_image
 from compressor.compressors.base_compressor import BaseCompressor
 from compressor.pipeline.measurement_utils import compute_frame_stats, mb_from_bytes
 from compressor.compressors.identity_compressor import IdentityCompressor
@@ -161,13 +161,14 @@ class BasePipeline:
         keys = stats_list[0].keys()
         aggregated = {k: sum(s[k] for s in stats_list) / len(stats_list) for k in keys}
 
-        # Memory: raw uncompressed video vs compressed data on disk
+        # Memory: raw uncompressed vs compressed for the same evaluated frames
+        evaluated_indices = [int(p.stem.split("_")[1]) for p in output_paths]
         raw_bytes = sum(
-            image_pixel_bytes(read_image(p))
-            for p in sorted(self.gt_frames_dir.glob("frame_*.png"))
+            self._ensure_gt_frame(idx).stat().st_size for idx in evaluated_indices
         )
         compressed_bytes = sum(
-            f.stat().st_size for f in self.compressed_data_dir.iterdir() if f.is_file()
+            (self.compressed_data_dir / f"batch_{idx // self.reader.batch_size:06d}" / f"frame_{idx % self.reader.batch_size:04d}.png").stat().st_size
+            for idx in evaluated_indices
         )
         aggregated["raw_mb"] = mb_from_bytes(raw_bytes)
         aggregated["compressed_mb"] = mb_from_bytes(compressed_bytes)
@@ -183,6 +184,12 @@ class BasePipeline:
 if __name__ == "__main__":
     import argparse
 
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+
     parser = argparse.ArgumentParser(description="Run the video compression pipeline.")
     parser.add_argument("input_video", type=str, help="Path to input video file.")
     parser.add_argument("output_dir", type=str, help="Directory to write outputs.")
@@ -190,6 +197,7 @@ if __name__ == "__main__":
     parser.add_argument("--end_time_s", type=float, default=None, help="End time in seconds for processing a video segment.")
     parser.add_argument("--n_frames", type=int, default=50, help="Evaluate on a random subset of N frames (default: all).")
     parser.add_argument("--seed", type=int, default=0, help="Random seed for subset selection.")
+    parser.add_argument("--only_eval", action="store_true", help="Only run the evaluation phase (assumes compressed data and output frames already exist).")
     args = parser.parse_args()
 
     pipeline = BasePipeline(
@@ -199,6 +207,7 @@ if __name__ == "__main__":
         start_time_s=args.start_time_s,
         end_time_s=args.end_time_s,
     )
-    pipeline.compress_video()
-    pipeline.decompress_video()
+    if not args.only_eval:
+        pipeline.compress_video()
+        pipeline.decompress_video()
     pipeline.measure_statistics(n_frames=args.n_frames, seed=args.seed)
