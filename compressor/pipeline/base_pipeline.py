@@ -8,8 +8,8 @@ from compressor.data.video_writer import VideoWriter
 from compressor.data.image_utils import read_image, write_image
 from compressor.compressors.base_compressor import BaseCompressor
 from compressor.pipeline.measurement_utils import compute_frame_stats, mb_from_bytes
-from compressor.compressors.identity_compressor import IdentityCompressor
-from compressor.compressors.hevc_compressor import HEVCCompressor
+from compressor.compressors import *
+
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     pipeline = BasePipeline(
         args.input_video,
         args.output_dir,
-        compressor=HEVCCompressor(),
+        compressor=VAECompressor(),
         start_time_s=args.start_time_s,
         end_time_s=args.end_time_s,
     )

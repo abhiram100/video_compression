@@ -1,6 +1,5 @@
 import subprocess
-import shutil
-import numpy as np
+import tempfile
 from pathlib import Path
 from PIL import Image
 from .base_compressor import BaseCompressor
@@ -14,43 +13,36 @@ class HEVCCompressor(BaseCompressor):
         self.crf = crf
         self.preset = preset
         self.fps = fps
-        # Temporary directory for frames during the ffmpeg pipe
-        self.temp_workspace = Path("temp_hevc_workspace")
 
     def compress(self, frames):
         """
         Converts a list of PIL frames into a single HEVC bitstream (mp4).
         Returns the raw bytes of the video file to keep it in memory during the batch.
         """
-        if self.temp_workspace.exists():
-            shutil.rmtree(self.temp_workspace)
-        self.temp_workspace.mkdir(parents=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
 
-        # 1. Save frames as numbered PNGs for FFmpeg
-        for i, frame in enumerate(frames):
-            frame.save(self.temp_workspace / f"frame_{i:04d}.png")
+            # 1. Save frames as numbered PNGs for FFmpeg
+            for i, frame in enumerate(frames):
+                frame.save(tmp / f"frame_{i:04d}.png")
 
-        output_mp4 = self.temp_workspace / "temp_compressed.mp4"
-        
-        # 2. Run FFmpeg: libx265
-        cmd = [
-            "ffmpeg", "-y",
-            "-framerate", str(self.fps),
-            "-i", str(self.temp_workspace / "frame_%04d.png"),
-            "-c:v", "libx265",
-            "-crf", str(self.crf),
-            "-preset", self.preset,
-            "-pix_fmt", "yuv420p", # Essential for standard player compatibility
-            str(output_mp4)
-        ]
-        
-        subprocess.run(cmd, check=True, capture_output=True)
-        
-        # Read the resulting binary file into memory
-        with open(output_mp4, "rb") as f:
-            video_data = f.read()
-            
-        return video_data
+            output_mp4 = tmp / "temp_compressed.mp4"
+
+            # 2. Run FFmpeg: libx265
+            cmd = [
+                "ffmpeg", "-y",
+                "-framerate", str(self.fps),
+                "-i", str(tmp / "frame_%04d.png"),
+                "-c:v", "libx265",
+                "-crf", str(self.crf),
+                "-preset", self.preset,
+                "-pix_fmt", "yuv420p",
+                str(output_mp4)
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+
+            with open(output_mp4, "rb") as f:
+                return f.read()
 
     def write_compressed_data(self, compressed_bytes, output_dir, batch_index: int):
         """Writes the binary mp4 to the batch directory."""
@@ -74,25 +66,19 @@ class HEVCCompressor(BaseCompressor):
 
     def decompress(self, video_bytes):
         """
-        Takes the binary bytes, writes to a temp file, and uses FFmpeg 
+        Takes the binary bytes, writes to a temp file, and uses FFmpeg
         to extract the frames back into PIL images.
         """
-        if self.temp_workspace.exists():
-            shutil.rmtree(self.temp_workspace)
-        self.temp_workspace.mkdir(parents=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
 
-        # Write bytes to temp file for ffmpeg to read
-        temp_mp4 = self.temp_workspace / "to_decompress.mp4"
-        with open(temp_mp4, "wb") as f:
-            f.write(video_bytes)
+            temp_mp4 = tmp / "to_decompress.mp4"
+            with open(temp_mp4, "wb") as f:
+                f.write(video_bytes)
 
-        # Extract frames to PNG
-        out_pattern = self.temp_workspace / "out_%04d.png"
-        cmd = ["ffmpeg", "-y", "-i", str(temp_mp4), str(out_pattern)]
-        subprocess.run(cmd, check=True, capture_output=True)
+            out_pattern = tmp / "out_%04d.png"
+            cmd = ["ffmpeg", "-y", "-i", str(temp_mp4), str(out_pattern)]
+            subprocess.run(cmd, check=True, capture_output=True)
 
-        # Load back to PIL
-        frame_paths = sorted(self.temp_workspace.glob("out_*.png"))
-        frames = [Image.open(p).copy() for p in frame_paths]
-        
-        return frames
+            frame_paths = sorted(tmp.glob("out_*.png"))
+            return [Image.open(p).copy() for p in frame_paths]
