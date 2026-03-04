@@ -47,33 +47,31 @@ class BasePipeline:
         """<video_dir>/<video_filename>.frames  e.g. /data/clip.mp4.frames"""
         return self.input_video_path.parent / (self.input_video_path.name + ".frames")
 
-    def _ensure_gt_frames(self) -> None:
-        """Inflate the source video to PNG frames on disk if not already done."""
-        d = self.gt_frames_dir
-        if d.exists() and any(d.iterdir()):
-            logger.debug("GT frames already exist at %s, skipping inflation.", d)
-            return
+    @property
+    def _gt_reader(self) -> VideoReader:
+        """Lazy VideoReader over the full source video for GT frame extraction."""
+        if not hasattr(self, "_gt_reader_instance"):
+            self._gt_reader_instance = VideoReader(
+                self.input_video_path, batch_size=1, full_batches_only=False
+            )
+        return self._gt_reader_instance
 
-        logger.info("Inflating GT frames to %s ...", d)
+    def _ensure_gt_frame(self, frame_idx: int) -> Path:
+        """
+        Ensure a single GT frame is inflated to disk and return its path.
+        Only writes the file if it doesn't already exist.
+        """
+        d = self.gt_frames_dir
         d.mkdir(parents=True, exist_ok=True)
-        cap_reader = VideoReader(
-            self.input_video_path, batch_size=1, full_batches_only=False
-        )
-        for frame_idx in tqdm(
-            range(cap_reader.frame_count),
-            desc="Inflating GT frames",
-            unit="frame",
-        ):
-            frame = cap_reader.get_frame(frame_idx)  # RGB numpy
-            write_image(frame, d / f"frame_{frame_idx:06d}.png")
-        logger.info("Wrote %d GT frames to %s.", cap_reader.frame_count, d)
+        path = d / f"frame_{frame_idx:06d}.png"
+        if not path.exists():
+            frame = self._gt_reader.get_frame(frame_idx)  # RGB numpy
+            write_image(frame, path)
+        return path
 
     def _load_gt_frame(self, frame_idx: int):
-        """Load a single GT frame from the cache as a PIL Image."""
-
-        path = self.gt_frames_dir / f"frame_{frame_idx:06d}.png"
-        if not path.exists():
-            raise FileNotFoundError(f"GT frame not found: {path}")
+        """Inflate (if needed) and load a single GT frame as a PIL Image."""
+        path = self._ensure_gt_frame(frame_idx)
         return read_image(path)
 
     # ------------------------------------------------------------------
@@ -127,19 +125,31 @@ class BasePipeline:
     # Phase 3 – statistics
     # ------------------------------------------------------------------
 
-    def measure_statistics(self) -> dict:
+    def measure_statistics(self, n_frames: int | None = None, seed: int = 0) -> dict:
         """
-        Pull GT / processed frame pairs one at a time and compute stats.
-        Inflates GT frames first if the cache directory does not exist.
-        Returns a dict of aggregated metrics.
+        Compute quality metrics between GT and decompressed frames.
+
+        Args:
+            n_frames: If given, evaluate on a random subset of this many frames.
+                      If None, evaluate all output frames.
+            seed:     Random seed for reproducible subset selection.
+
+        GT frames are inflated on demand – only the required frames are written,
+        and any that already exist on disk are reused.
         """
-        self._ensure_gt_frames()
+        import random
 
         output_paths = sorted(self.output_frames_dir.glob("frame_*.png"))
         if not output_paths:
             raise RuntimeError("No output frames found – run decompress_video() first.")
 
-        logger.info("Computing frame-level statistics over %d frames.", len(output_paths))
+        if n_frames is not None and n_frames < len(output_paths):
+            rng = random.Random(seed)
+            output_paths = sorted(rng.sample(output_paths, n_frames))
+            logger.info("Evaluating on %d / %d frames (seed=%d).", n_frames, len(output_paths), seed)
+        else:
+            logger.info("Evaluating on all %d frames.", len(output_paths))
+
         stats_list = []
         for out_path in tqdm(output_paths, desc="Measuring statistics", unit="frame"):
             frame_idx = int(out_path.stem.split("_")[1])
@@ -166,7 +176,7 @@ class BasePipeline:
         )
 
         for k, v in aggregated.items():
-            print(f"{k}: {v:.4f}")
+            logger.info("%s: %.4f", k, v)
         return aggregated
 
 
@@ -178,6 +188,8 @@ if __name__ == "__main__":
     parser.add_argument("output_dir", type=str, help="Directory to write outputs.")
     parser.add_argument("--start_time_s", type=float, default=0.0, help="Start time in seconds for processing a video segment.")
     parser.add_argument("--end_time_s", type=float, default=None, help="End time in seconds for processing a video segment.")
+    parser.add_argument("--n_frames", type=int, default=50, help="Evaluate on a random subset of N frames (default: all).")
+    parser.add_argument("--seed", type=int, default=0, help="Random seed for subset selection.")
     args = parser.parse_args()
 
     pipeline = BasePipeline(
@@ -189,4 +201,4 @@ if __name__ == "__main__":
     )
     pipeline.compress_video()
     pipeline.decompress_video()
-    pipeline.measure_statistics()
+    pipeline.measure_statistics(n_frames=args.n_frames, seed=args.seed)
