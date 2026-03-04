@@ -35,6 +35,13 @@ class BaseCompressor(ABC):
         """
         raise NotImplementedError
 
+    def compressed_batch_size_bytes(self, input_dir, batch_index: int) -> int:
+        """
+        Return the total on-disk size in bytes for a single compressed batch.
+        Subclasses must implement this to match their storage format.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def decompress(self, compressed_frames):
         """

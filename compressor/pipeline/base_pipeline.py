@@ -9,6 +9,7 @@ from compressor.data.image_utils import read_image, write_image
 from compressor.compressors.base_compressor import BaseCompressor
 from compressor.pipeline.measurement_utils import compute_frame_stats, mb_from_bytes
 from compressor.compressors.identity_compressor import IdentityCompressor
+from compressor.compressors.hevc_compressor import HEVCCompressor
 
 logger = logging.getLogger(__name__)
 
@@ -166,9 +167,10 @@ class BasePipeline:
         raw_bytes = sum(
             self._ensure_gt_frame(idx).stat().st_size for idx in evaluated_indices
         )
+        evaluated_batches = set(idx // self.reader.batch_size for idx in evaluated_indices)
         compressed_bytes = sum(
-            (self.compressed_data_dir / f"batch_{idx // self.reader.batch_size:06d}" / f"frame_{idx % self.reader.batch_size:04d}.png").stat().st_size
-            for idx in evaluated_indices
+            self.compressor.compressed_batch_size_bytes(self.compressed_data_dir, batch_idx)
+            for batch_idx in evaluated_batches
         )
         aggregated["raw_mb"] = mb_from_bytes(raw_bytes)
         aggregated["compressed_mb"] = mb_from_bytes(compressed_bytes)
@@ -203,7 +205,7 @@ if __name__ == "__main__":
     pipeline = BasePipeline(
         args.input_video,
         args.output_dir,
-        compressor=IdentityCompressor(),
+        compressor=HEVCCompressor(),
         start_time_s=args.start_time_s,
         end_time_s=args.end_time_s,
     )

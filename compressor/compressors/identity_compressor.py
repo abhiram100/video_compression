@@ -21,5 +21,9 @@ class IdentityCompressor(BaseCompressor):
         paths = sorted(batch_dir.glob("frame_*.png"))
         return [read_image(p) for p in paths]
 
+    def compressed_batch_size_bytes(self, input_dir, batch_index: int) -> int:
+        batch_dir = Path(input_dir) / f"batch_{batch_index:06d}"
+        return sum(p.stat().st_size for p in batch_dir.glob("frame_*.png"))
+
     def decompress(self, compressed_frames):
         return compressed_frames
