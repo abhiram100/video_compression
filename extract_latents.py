@@ -27,9 +27,8 @@ def load_vae(model_id: str, device: torch.device) -> AutoencoderKL:
     return vae
 
 
-def frame_to_tensor(frame_bgr: np.ndarray, size: int = 512) -> torch.Tensor:
-    """BGR numpy → normalised RGB tensor in [-1, 1], shape (1, 3, H, W)."""
-    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+def frame_to_tensor(frame_rgb: np.ndarray, size: int = 512) -> torch.Tensor:
+    """RGB numpy → normalised tensor in [-1, 1], shape (1, 3, H, W)."""
     img = Image.fromarray(frame_rgb)
     transform = transforms.Compose([
         transforms.Resize((size, size)),
@@ -98,10 +97,10 @@ def extract_latents(video_path: str, n_frames: int, model_id: str,
     with tqdm(total=len(indices), desc="Encoding frames") as pbar:
         for frame_idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ok, frame = cap.read()
+            ok, frame_bgr = cap.read()
             if not ok:
                 break
-            tensor = frame_to_tensor(frame, size=frame_size)
+            tensor = frame_to_tensor(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB), size=frame_size)
             z = encode_frame(vae, tensor)         # (C, H, W)
             latents.append(z.reshape(-1))         # flatten → (C*H*W,)
             collected += 1

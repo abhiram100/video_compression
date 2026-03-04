@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from compressor.data.video_reader import VideoReader
 from compressor.data.video_writer import VideoWriter
-from compressor.data.image_utils import read_image, write_image, bgr_to_pil, image_pixel_bytes
+from compressor.data.image_utils import read_image, write_image, image_pixel_bytes
 from compressor.compressors.base_compressor import BaseCompressor
 from compressor.pipeline.measurement_utils import compute_frame_stats, mb_from_bytes
 from compressor.compressors.identity_compressor import IdentityCompressor
@@ -64,8 +64,8 @@ class BasePipeline:
             desc="Inflating GT frames",
             unit="frame",
         ):
-            frame = cap_reader.get_frame(frame_idx)  # BGR numpy
-            write_image(bgr_to_pil(frame), d / f"frame_{frame_idx:06d}.png")
+            frame = cap_reader.get_frame(frame_idx)  # RGB numpy
+            write_image(frame, d / f"frame_{frame_idx:06d}.png")
         logger.info("Wrote %d GT frames to %s.", cap_reader.frame_count, d)
 
     def _load_gt_frame(self, frame_idx: int):

@@ -91,10 +91,9 @@ def load_vae(model_id: str, device: torch.device) -> AutoencoderKL:
     return vae.to(device).eval()
 
 
-def frame_to_tensor(frame_bgr: np.ndarray, size: int = 512) -> torch.Tensor:
-    """BGR numpy → normalised RGB tensor [-1,1], shape (1,3,H,W)."""
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(rgb)
+def frame_to_tensor(frame_rgb: np.ndarray, size: int = 512) -> torch.Tensor:
+    """RGB numpy → normalised tensor [-1,1], shape (1,3,H,W)."""
+    img = Image.fromarray(frame_rgb)
     tf = transforms.Compose([
         transforms.Resize((size, size)),
         transforms.ToTensor(),
@@ -155,10 +154,10 @@ def extract_gop_latents(video_path: str,
     device = next(vae.parameters()).device
     for idx in tqdm(frame_indices, desc=f"  encoding stride={stride}", leave=False):
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ok, frame = cap.read()
+        ok, frame_bgr = cap.read()
         if not ok:
             raise RuntimeError(f"Could not read frame {idx} from {video_path}")
-        tensor = frame_to_tensor(frame, size=frame_size).to(device)
+        tensor = frame_to_tensor(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB), size=frame_size).to(device)
         z = encode_frame(vae, tensor)
         latents.append(z)
 
